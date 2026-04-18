@@ -52,16 +52,23 @@ async def _run(profile_dir: Path, cookies_path: Path) -> None:
         # check all pages since OSCAR can open a new tab
         all_urls = [p.url for p in context.pages]
         log.debug("checking_pages", urls=all_urls)
+
+        if not all_urls:
+            log.error("browser_closed", msg="no pages open when Enter pressed")
+            print("ERROR: Browser window was closed before pressing Enter.")
+            print("Re-run the command and keep the browser open until you reach the OSCAR homepage.")
+            await context.close()
+            sys.exit(1)
+
         auth_pages = [u for u in all_urls if any(h in u for h in _SSO_HOSTS)]
         ok_pages = [u for u in all_urls if not any(h in u for h in _SSO_HOSTS)]
 
         if not ok_pages:
-            current_url = all_urls[0] if all_urls else "(none)"
-            log.error("login_incomplete", url=current_url, all_urls=all_urls)
-            print(f"ERROR: All open tabs still on auth page.")
+            log.error("login_incomplete", url=all_urls[0], all_urls=all_urls)
+            print("ERROR: All open tabs still on SSO/Duo auth page.")
             for u in all_urls:
                 print(f"  {u}")
-            print("Complete the login flow first, then press Enter.")
+            print("Complete the full login flow and land on the OSCAR homepage, then re-run.")
             await context.close()
             sys.exit(1)
 

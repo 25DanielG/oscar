@@ -34,8 +34,13 @@ if [[ -z "$VPS_HOST" ]]; then
     exit 0
 fi
 
-VPS_USER="${VPS_USER:-ubuntu}"
-VPS_COOKIES_PATH="${VPS_COOKIES_PATH:-~/oscar/session.json}"
+VPS_USER="${VPS_USER:-root}"
+if [[ "$VPS_USER" == "root" ]]; then
+    _vps_home="/root"
+else
+    _vps_home="/home/${VPS_USER}"
+fi
+VPS_COOKIES_PATH="${VPS_COOKIES_PATH:-${_vps_home}/oscar/session.json}"
 TARGET="${VPS_USER}@${VPS_HOST}:${VPS_COOKIES_PATH}"
 
 read -rp "Upload session.json to ${TARGET}? [y/N] " confirm
