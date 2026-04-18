@@ -6,6 +6,17 @@ import typer
 from oscar.client.session import SessionExpiredError
 
 
+_SPARK = "▁▂▃▄▅▆▇█"
+
+def _sparkline(values: list[int], width: int = 72) -> str:
+    vals = values[-width:]
+    if not vals:
+        return ""
+    hi = max(vals)
+    if hi == 0:
+        return "▁" * len(vals)
+    return "".join(_SPARK[min(7, int(v / hi * 8))] for v in vals)
+
 def _relative_time(iso_utc: str) -> str:
     then = datetime.fromisoformat(iso_utc).replace(tzinfo=timezone.utc)
     s = int((datetime.now(timezone.utc) - then).total_seconds())
@@ -404,6 +415,62 @@ def dry_run(crn: str, term: str = typer.Option("", "--term", "-t", help="Term co
             raise typer.Exit(1)
 
     asyncio.run(_run())
+
+@app.command("history")
+def history( crn: str, term: str = typer.Option("", "--term", "-t", help="Term code. Defaults to config.yaml term.")) -> None:
+    """Show seat availability history and sparkline for a CRN."""
+    from oscar.config import Settings
+    from oscar.db import get_connection
+
+    settings = Settings()
+    try:
+        config = settings.load_config()
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+
+    _term = term or config.term
+
+    if not config.db_path.exists():
+        typer.echo("No DB yet — start the monitor first.", err=True)
+        raise typer.Exit(1)
+
+    conn = get_connection(config.db_path)
+    rows = conn.execute(
+        "SELECT polled_at, seats_available, wait_available, open_section, state_changed "
+        "FROM poll_log WHERE crn = ? AND term = ? ORDER BY polled_at ASC",
+        (crn, _term),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        typer.echo(f"No history for CRN {crn} term {_term}.")
+        raise typer.Exit(1)
+
+    total = len(rows)
+    first = _relative_time(rows[0]["polled_at"])
+    last = _relative_time(rows[-1]["polled_at"])
+    changes = sum(1 for r in rows if r["state_changed"])
+
+    seats_vals = [r["seats_available"] for r in rows]
+    wait_vals  = [r["wait_available"]  for r in rows]
+
+    open_count     = sum(1 for r in rows if r["seats_available"] > 0)
+    waitlist_count = sum(1 for r in rows if r["seats_available"] == 0 and r["wait_available"] > 0)
+    full_count     = sum(1 for r in rows if r["seats_available"] == 0 and r["wait_available"] == 0)
+
+    seats_avg = sum(seats_vals) / total
+    wait_avg  = sum(wait_vals)  / total
+
+    typer.echo(f"CRN {crn}  ·  {_term}  ·  {total} polls  ·  {first} → {last}")
+    typer.echo("")
+    typer.echo(f"Seats (last {min(72, total)} polls)")
+    typer.echo(_sparkline(seats_vals, width=72))
+    typer.echo("")
+    typer.echo(f"  Seats     min={min(seats_vals)}  max={max(seats_vals)}  avg={seats_avg:.1f}   open: {open_count} ({open_count/total*100:.1f}%)")
+    typer.echo(f"  Waitlist  min={min(wait_vals)}  max={max(wait_vals)}  avg={wait_avg:.1f}   open: {waitlist_count} ({waitlist_count/total*100:.1f}%)")
+    typer.echo(f"  Full      {full_count} polls ({full_count/total*100:.1f}%)")
+    typer.echo(f"  Changes   {changes} state transitions")
 
 if __name__ == "__main__":
     app()
