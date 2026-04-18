@@ -1,0 +1,42 @@
+# Secrets, sessions, configs
+.env
+session.json
+*.har
+har/
+config.yaml
+
+# Browser profile lives in ~/.oscar/
+browser_profile/
+
+# Logs and database
+logs/
+*.log
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
