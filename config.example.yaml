@@ -1,4 +1,4 @@
-term: "202608" # format: YYYYMM
+term: "202608"
 
 crns:
   - crn: "12345"
@@ -7,13 +7,13 @@ crns:
     label: "CS 4400 - Database Systems"
   - crn: "11111"
     label: "ECE 2031 - Digital Design Lab"
-    retry_on_restriction: true  # keep retrying silently when major-restricted
+    retry_on_restriction: true
 
 poll:
-  base_interval: 20 # seconds between polls per CRN
-  jitter: 10 # random seconds added to each interval, not below 10s total
+  base_interval: 20
+  jitter: 10
 
 cookies_path: "session.json"
 db_path: "oscar.db"
 log_dir: "logs"
-dry_run: false # true runs pipeline without auto-registering
+dry_run: false

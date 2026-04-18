@@ -224,12 +224,58 @@ def register_now(crn: str, term: str = typer.Option("", "--term", "-t", help="Te
 @app.command("add")
 def add_crn(crn: str, label: str = typer.Option("", "--label", "-l", help="Human-readable label.")) -> None:
     """Add a CRN to the watch list."""
-    # todo: implement in app editing config
+    import yaml
+    from oscar.config import Settings
+
+    settings = Settings()
+    path = settings.config_path
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+
+    crns = data.setdefault("crns", [])
+    if any(str(c.get("crn", c)) == crn for c in crns):
+        typer.echo(f"CRN {crn} already in watch list.")
+        raise typer.Exit(1)
+
+    entry: dict = {"crn": crn}
+    if label:
+        entry["label"] = label
+    crns.append(entry)
+
+    with open(path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    typer.echo(f"Added CRN {crn}.")
+
 
 @app.command("remove")
 def remove_crn(crn: str) -> None:
     """Remove a CRN from the watch list."""
-    # todo: implement in app editing config
+    import yaml
+    from oscar.config import Settings
+
+    settings = Settings()
+    path = settings.config_path
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+
+    crns = data.get("crns", [])
+    new_crns = [c for c in crns if str(c.get("crn", c)) != crn]
+    if len(new_crns) == len(crns):
+        typer.echo(f"CRN {crn} not found in watch list.")
+        raise typer.Exit(1)
+
+    data["crns"] = new_crns
+    with open(path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    typer.echo(f"Removed CRN {crn}.")
 
 @app.command("logs")
 def logs(tail: int = typer.Option(50, "--tail", "-n", help="Lines to show.")) -> None:
