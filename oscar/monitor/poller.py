@@ -20,7 +20,7 @@ import structlog
 
 from oscar import log as applog
 from oscar.client.models import ClassAvailability
-from oscar.client.session import BannerClient, BannerError, SessionExpiredError
+from oscar.client.session import BannerClient, BannerError, SchemaDriftError, SessionExpiredError
 from oscar.config import Config
 from oscar.db import init_db
 from oscar.monitor import state as st
@@ -49,6 +49,7 @@ class Monitor:
         self._reg_lock: asyncio.Lock | None = None
         # silent retry after a major-restriction failure
         self._restriction_pending: set[str] = set()
+        self._drift_alerted: set[str] = set()
         self._crn_cfg_map = {c.crn: c for c in config.crns}
 
     # entry point
@@ -120,6 +121,15 @@ class Monitor:
             except SessionExpiredError:
                 await self._handle_session_expiry()
                 continue # skip sleep, re-check session_ok immediately
+            except SchemaDriftError as exc:
+                log.error("schema_drift_detected", crn=crn, error=str(exc))
+                if crn not in self._drift_alerted:
+                    self._drift_alerted.add(crn)
+                    await self._notify(
+                        f"OSCAR: API Schema Drift — CRN {crn}",
+                        f"Banner response shape changed.\nCRN {crn} skipped until fixed.\n{exc}",
+                        priority=PRIORITY_HIGH,
+                    )
             except BannerError as exc:
                 consecutive_errors += 1
                 log.error("poll_banner_error", crn=crn, error=str(exc), consecutive=consecutive_errors)

@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from oscar.client.models import ClassAvailability
-from oscar.client.session import SessionExpiredError
+from oscar.client.session import SchemaDriftError, SessionExpiredError
 from oscar.config import Config, CRNConfig, PollSettings
 from oscar.db import init_db
 from oscar.monitor.poller import Monitor
@@ -62,6 +62,7 @@ def _make_monitor(tmp_path: Path, on_trigger=None) -> tuple[Monitor, MagicMock]:
     mon._session_ok = asyncio.Event()
     mon._session_ok.set()
     mon._expiry_lock = asyncio.Lock()
+    mon._reg_lock = asyncio.Lock()
     mon._db = init_db(config.db_path)
     mon._client = mock_client
     return mon, mock_client
@@ -173,7 +174,7 @@ async def test_do_poll_no_trigger_when_already_open(tmp_path: Path) -> None:
 # _do_poll: DB persists
 
 async def test_do_poll_saves_state_to_db(tmp_path: Path) -> None:
-    mon, mock_client = _make_monitor(tmp_path)
+    mon, mock_client = _make_monitor(tmp_path, on_trigger=AsyncMock())
     mock_client.get_availability.return_value = _avail(seats=3)
 
     await mon._do_poll("80168", "202608")
@@ -203,3 +204,41 @@ async def test_do_poll_propagates_session_expired(tmp_path: Path) -> None:
 
     with pytest.raises(SessionExpiredError):
         await mon._do_poll("80168", "202608")
+
+# SchemaDriftError: propagates out of _do_poll, caught and swallowed by _poll_crn_loop
+
+async def test_do_poll_propagates_schema_drift(tmp_path: Path) -> None:
+    mon, mock_client = _make_monitor(tmp_path)
+    mock_client.get_availability.side_effect = SchemaDriftError("seatsAvailable missing")
+
+    with pytest.raises(SchemaDriftError):
+        await mon._do_poll("80168", "202608")
+
+async def test_poll_crn_loop_schema_drift_notifies_once(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    notifier = AsyncMock()
+    config = _make_config(tmp_path)
+    mon = Monitor(config=config, notifier=notifier)
+    mon._session_ok = asyncio.Event()
+    mon._session_ok.set()
+    mon._expiry_lock = asyncio.Lock()
+    mon._db = init_db(config.db_path)
+
+    mock_client = AsyncMock()
+    # two drift errors then CancelledError to exit the loop
+    mock_client.get_availability.side_effect = [
+        SchemaDriftError("seatsAvailable missing"),
+        SchemaDriftError("seatsAvailable missing"),
+        asyncio.CancelledError(),
+    ]
+    mon._client = mock_client
+
+    with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
+        with pytest.raises(asyncio.CancelledError):
+            await mon._poll_crn_loop(config.crns[0])
+
+    # notifier fired once even though two drift errors
+    assert notifier.send.call_count == 1
+    assert "Schema Drift" in notifier.send.call_args[0][0]
+    assert "80168" in mon._drift_alerted

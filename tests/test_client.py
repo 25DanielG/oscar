@@ -4,8 +4,14 @@ import httpx
 import pytest
 import respx
 
-from oscar.client.endpoints import CLASS_SEARCH, GET_SECTION_DETAILS, REGISTRATION_PAGE
-from oscar.client.session import BannerClient, BannerError, SessionExpiredError
+from oscar.client.endpoints import (
+    CLASS_REGISTRATION_PAGE,
+    CLASS_SEARCH,
+    GET_SECTION_DETAILS,
+    REGISTRATION_PAGE,
+    TERM_SEARCH,
+)
+from oscar.client.session import BannerClient, BannerError, SchemaDriftError, SessionExpiredError
 
 _SYNC_TOKEN = "13ab7c16-286f-4ead-a7a4-1687d5b1e7d2"
 _COOKIES = {"CASTGC": "tgc_value", "JSESSIONID": "sess_value"}
@@ -84,15 +90,20 @@ _SEARCH_FULL = {
     ],
 }
 
-def _mock_base(search_payload: dict) -> None:
+def _mock_acquire_tokens() -> None:
     respx.get(REGISTRATION_PAGE).mock(return_value=httpx.Response(200, text=_REG_PAGE_HTML))
+    respx.post(TERM_SEARCH).mock(return_value=httpx.Response(200, text=""))
+    respx.get(CLASS_REGISTRATION_PAGE).mock(return_value=httpx.Response(200, text="ok"))
+
+def _mock_base(search_payload: dict) -> None:
+    _mock_acquire_tokens()
     respx.get(GET_SECTION_DETAILS).mock(return_value=httpx.Response(200, json=_SECTION_DETAILS))
     respx.get(CLASS_SEARCH).mock(return_value=httpx.Response(200, json=search_payload))
 
 @respx.mock
 async def test_open_seat_flags() -> None:
     _mock_base(_SEARCH_OPEN)
-    async with BannerClient(_COOKIES) as client:
+    async with BannerClient(_COOKIES, "202608") as client:
         avail = await client.get_availability("80168", "202608")
 
     assert avail.crn == "80168"
@@ -104,7 +115,7 @@ async def test_open_seat_flags() -> None:
 @respx.mock
 async def test_waitlist_only_flags() -> None:
     _mock_base(_SEARCH_WAITLIST_ONLY)
-    async with BannerClient(_COOKIES) as client:
+    async with BannerClient(_COOKIES, "202608") as client:
         avail = await client.get_availability("80168", "202608")
 
     assert not avail.has_open_seat
@@ -114,7 +125,7 @@ async def test_waitlist_only_flags() -> None:
 @respx.mock
 async def test_full_section_flags() -> None:
     _mock_base(_SEARCH_FULL)
-    async with BannerClient(_COOKIES) as client:
+    async with BannerClient(_COOKIES, "202608") as client:
         avail = await client.get_availability("80168", "202608")
 
     assert not avail.has_open_seat
@@ -123,43 +134,47 @@ async def test_full_section_flags() -> None:
 
 @respx.mock
 async def test_session_expired_on_registration_page() -> None:
+    # follow_redirects=True means respx follows the 302 to SSO, mock the destination too.
     respx.get(REGISTRATION_PAGE).mock(
         return_value=httpx.Response(
             302, headers={"location": "https://sso.gatech.edu/cas/login?TARGET=..."}
         )
     )
+    respx.get("https://sso.gatech.edu/cas/login").mock(
+        return_value=httpx.Response(200, text="SSO login page")
+    )
     with pytest.raises(SessionExpiredError, match="sso.gatech.edu"):
-        async with BannerClient(_COOKIES):
+        async with BannerClient(_COOKIES, "202608"):
             pass
 
 @respx.mock
 async def test_session_expired_mid_request() -> None:
-    respx.get(REGISTRATION_PAGE).mock(return_value=httpx.Response(200, text=_REG_PAGE_HTML))
+    _mock_acquire_tokens()
     respx.get(GET_SECTION_DETAILS).mock(
         return_value=httpx.Response(
             302, headers={"location": "https://sso.gatech.edu/cas/login"}
         )
     )
     with pytest.raises(SessionExpiredError):
-        async with BannerClient(_COOKIES) as client:
+        async with BannerClient(_COOKIES, "202608") as client:
             await client.get_availability("80168", "202608")
 
 @respx.mock
 async def test_crn_not_found_raises() -> None:
     _mock_base({**_SEARCH_OPEN, "data": []})
     with pytest.raises(BannerError, match="not found in search results"):
-        async with BannerClient(_COOKIES) as client:
+        async with BannerClient(_COOKIES, "202608") as client:
             await client.get_availability("80168", "202608")
 
 @respx.mock
 async def test_section_details_cached() -> None:
-    respx.get(REGISTRATION_PAGE).mock(return_value=httpx.Response(200, text=_REG_PAGE_HTML))
+    _mock_acquire_tokens()
     details_route = respx.get(GET_SECTION_DETAILS).mock(
         return_value=httpx.Response(200, json=_SECTION_DETAILS)
     )
     respx.get(CLASS_SEARCH).mock(return_value=httpx.Response(200, json=_SEARCH_OPEN))
 
-    async with BannerClient(_COOKIES) as client:
+    async with BannerClient(_COOKIES, "202608") as client:
         await client.get_availability("80168", "202608")
         await client.get_availability("80168", "202608")
 
@@ -171,17 +186,46 @@ async def test_token_parse_failure_raises() -> None:
     respx.get(REGISTRATION_PAGE).mock(
         return_value=httpx.Response(200, text="<html><body>no token here</body></html>")
     )
+    respx.post(TERM_SEARCH).mock(return_value=httpx.Response(200, text=""))
+    respx.get(CLASS_REGISTRATION_PAGE).mock(return_value=httpx.Response(200, text="ok"))
     with pytest.raises(BannerError, match="X-Synchronizer-Token"):
-        async with BannerClient(_COOKIES):
+        async with BannerClient(_COOKIES, "202608"):
             pass
 
 @respx.mock
 async def test_search_api_error_raises() -> None:
-    respx.get(REGISTRATION_PAGE).mock(return_value=httpx.Response(200, text=_REG_PAGE_HTML))
+    _mock_acquire_tokens()
     respx.get(GET_SECTION_DETAILS).mock(return_value=httpx.Response(200, json=_SECTION_DETAILS))
     respx.get(CLASS_SEARCH).mock(
         return_value=httpx.Response(200, json={"success": False, "message": "Session timed out"})
     )
     with pytest.raises(BannerError, match="Class search failed"):
-        async with BannerClient(_COOKIES) as client:
+        async with BannerClient(_COOKIES, "202608") as client:
+            await client.get_availability("80168", "202608")
+
+# schema drift
+
+@respx.mock
+async def test_schema_drift_missing_field_in_search() -> None:
+    section = {k: v for k, v in _SEARCH_OPEN["data"][0].items() if k != "seatsAvailable"}
+    _mock_base({"success": True, "totalCount": 1, "data": [section]})
+    with pytest.raises(SchemaDriftError, match="seatsAvailable"):
+        async with BannerClient(_COOKIES, "202608") as client:
+            await client.get_availability("80168", "202608")
+
+@respx.mock
+async def test_schema_drift_wrong_type_in_search() -> None:
+    section = {**_SEARCH_OPEN["data"][0], "seatsAvailable": "not-an-int"}
+    _mock_base({"success": True, "totalCount": 1, "data": [section]})
+    with pytest.raises(SchemaDriftError, match="ClassAvailability schema mismatch"):
+        async with BannerClient(_COOKIES, "202608") as client:
+            await client.get_availability("80168", "202608")
+
+@respx.mock
+async def test_schema_drift_missing_field_in_section_details() -> None:
+    broken = {k: v for k, v in _SECTION_DETAILS.items() if k != "courseNumber"}
+    _mock_acquire_tokens()
+    respx.get(GET_SECTION_DETAILS).mock(return_value=httpx.Response(200, json={**broken, "success": True}))
+    with pytest.raises(SchemaDriftError, match="courseNumber"):
+        async with BannerClient(_COOKIES, "202608") as client:
             await client.get_availability("80168", "202608")

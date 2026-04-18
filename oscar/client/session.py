@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 import structlog
+from pydantic import ValidationError
 
 from oscar.auth.cookie_store import as_httpx_cookies, load_cookies
 from oscar.client.endpoints import (
@@ -53,6 +54,9 @@ class SessionExpiredError(Exception):
 
 class BannerError(Exception):
     """Banner returned an unexpected response or success=false."""
+
+class SchemaDriftError(Exception):
+    """Banner API response shape changed — a field is missing or has an unexpected type."""
 
 def _make_session_id() -> str:
     prefix = "".join(random.choices(string.ascii_lowercase, k=5))
@@ -179,15 +183,21 @@ class BannerClient:
         if not data.get("success"):
             raise BannerError(f"getSectionDetailsFromCRN failed for CRN {crn}: {data}")
 
-        details = SectionDetails(
-            crn=crn,
-            term=term,
-            subject=data["subject"],
-            course_number=data["courseNumber"],
-            sequence_number=data["sequenceNumber"],
-            course_title=data["courseTitle"],
-            olr=data.get("olr", False),
-        )
+        try:
+            details = SectionDetails(
+                crn=crn,
+                term=term,
+                subject=data["subject"],
+                course_number=data["courseNumber"],
+                sequence_number=data["sequenceNumber"],
+                course_title=data["courseTitle"],
+                olr=data.get("olr", False),
+            )
+        except (KeyError, ValidationError) as exc:
+            raise SchemaDriftError(
+                f"SectionDetails schema mismatch for CRN {crn}: {exc}. "
+                f"Response keys: {sorted(data.keys())}"
+            ) from exc
         self._section_cache[key] = details
         log.debug("section_details_cached", crn=crn, subject=details.subject, course=details.course_number)
         return details
@@ -219,20 +229,26 @@ class BannerClient:
 
         for section in data.get("data", []):
             if section.get("courseReferenceNumber") == crn:
-                avail = ClassAvailability(
-                    crn=section["courseReferenceNumber"],
-                    term=section["term"],
-                    course_title=section["courseTitle"],
-                    subject=section["subject"],
-                    course_number=section["courseNumber"],
-                    seats_available=section["seatsAvailable"],
-                    max_enrollment=section["maximumEnrollment"],
-                    enrollment=section["enrollment"],
-                    wait_capacity=section["waitCapacity"],
-                    wait_count=section["waitCount"],
-                    wait_available=section["waitAvailable"],
-                    open_section=section["openSection"],
-                )
+                try:
+                    avail = ClassAvailability(
+                        crn=section["courseReferenceNumber"],
+                        term=section["term"],
+                        course_title=section["courseTitle"],
+                        subject=section["subject"],
+                        course_number=section["courseNumber"],
+                        seats_available=section["seatsAvailable"],
+                        max_enrollment=section["maximumEnrollment"],
+                        enrollment=section["enrollment"],
+                        wait_capacity=section["waitCapacity"],
+                        wait_count=section["waitCount"],
+                        wait_available=section["waitAvailable"],
+                        open_section=section["openSection"],
+                    )
+                except (KeyError, ValidationError) as exc:
+                    raise SchemaDriftError(
+                        f"ClassAvailability schema mismatch for CRN {crn}: {exc}. "
+                        f"Response keys: {sorted(section.keys())}"
+                    ) from exc
                 log.debug(
                     "availability_fetched",
                     crn=crn,
