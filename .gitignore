@@ -4,6 +4,7 @@ session.json
 *.har
 har/
 config.yaml
+BANNER_ENDPOINTS.md
 
 # Browser profile lives in ~/.oscar/
 browser_profile/
