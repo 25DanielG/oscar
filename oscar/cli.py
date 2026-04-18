@@ -1,8 +1,19 @@
 from __future__ import annotations
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 import typer
 from oscar.client.session import SessionExpiredError
+
+
+def _relative_time(iso_utc: str) -> str:
+    then = datetime.fromisoformat(iso_utc).replace(tzinfo=timezone.utc)
+    s = int((datetime.now(timezone.utc) - then).total_seconds())
+    if s < 60:
+        return f"{s}s ago"
+    if s < 3600:
+        return f"{s // 60}m ago"
+    return f"{s // 3600}h ago"
 
 _EXAMPLES = """
 [bold]Examples:[/bold]\n
@@ -70,9 +81,11 @@ def auth_status() -> None:
 
 @app.command("status")
 def status() -> None:
-    """Show session health and monitored CRNs."""
+    """Show session health, cookie expiry, and per-CRN seat state."""
+    from oscar.auth.cookie_store import castgc_hours_remaining, load_cookies
     from oscar.auth.health_check import check_session
     from oscar.config import Settings
+    from oscar.db import get_connection
 
     settings = Settings()
     try:
@@ -82,12 +95,60 @@ def status() -> None:
         raise typer.Exit(1)
 
     healthy = asyncio.run(check_session(config.cookies_path))
-    typer.echo(f"Session: {'VALID' if healthy else 'EXPIRED'}")
+    session_label = "VALID" if healthy else "EXPIRED"
+    expiry_str = ""
+    try:
+        cookies = load_cookies(config.cookies_path)
+        hours = castgc_hours_remaining(cookies)
+        if hours is not None:
+            expiry_str = f" (expires in {hours:.0f}h)" if hours > 0 else " (EXPIRED)"
+    except FileNotFoundError:
+        pass
+
+    typer.echo(f"Session: {session_label}{expiry_str}")
     typer.echo(f"Term:    {config.term}")
     typer.echo(f"CRNs:    {len(config.crns)}")
-    for crn in config.crns:
-        label = f"  ({crn.label})" if crn.label else ""
-        typer.echo(f"  {crn.crn}{label}")
+    typer.echo("")
+
+    db_rows: dict[str, object] = {}
+    if config.db_path.exists():
+        try:
+            conn = get_connection(config.db_path)
+            rows = conn.execute(
+                "SELECT crn, seats_available, wait_available, last_seen "
+                "FROM crn_state WHERE term = ?",
+                (config.term,),
+            ).fetchall()
+            conn.close()
+            db_rows = {row["crn"]: row for row in rows}
+        except Exception:
+            pass
+
+    for crn_cfg in config.crns:
+        crn = crn_cfg.crn
+        tag = f" ({crn_cfg.label})" if crn_cfg.label else ""
+        prefix = f"  {crn}{tag}"
+
+        if crn not in db_rows:
+            typer.echo(f"{prefix:<30}  not yet polled")
+            continue
+
+        row = db_rows[crn]
+        seats = row["seats_available"]
+        wait = row["wait_available"]
+
+        if seats > 0:
+            badge = "OPEN"
+            detail = f"{seats} seat{'s' if seats != 1 else ''}"
+        elif wait > 0:
+            badge = "WAITLIST"
+            detail = f"{wait} spot{'s' if wait != 1 else ''}"
+        else:
+            badge = "FULL"
+            detail = ""
+
+        age = _relative_time(row["last_seen"])
+        typer.echo(f"{prefix:<30}  {badge:<9}  {detail:<14}  {age}")
 
 @app.command("check-crn")
 def check_crn(crn: str, term: str = typer.Option("", "--term", "-t", help="Term code defaulting to argument in config.")) -> None:
