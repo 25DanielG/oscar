@@ -6,7 +6,6 @@ Session expiry flow:
     - recovery loop retries _open_client() every 30s
     - success → replaces self._client → sets event → all pollers resume
 
-todo: implement pass on_trigger to inject real registrar callback, for silent retries on major restriction crns
 """
 
 from __future__ import annotations

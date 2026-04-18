@@ -118,8 +118,14 @@ def _parse_response(response: dict, crn: str, action: RegistrationAction) -> Reg
     status_indicator = our_row.get("statusIndicator") if our_row else None
     error_flag = our_row.get("errorFlag") if our_row else None
 
-    # success: top_success + statusIndicator="R" + errorFlag="0" or null (no error).
-    # banner can omits errorFlag on clean registration, returns null instead of "0".
+    if our_row:
+        for crn_err in our_row.get("crnErrors", []):
+            msg = crn_err.get("message")
+            if msg:
+                top_errors.append(msg)
+
+    # success: top_success + statusIndicator="R" + errorFlag="O" or null (no error).
+    # banner omits errorFlag on clean registration, returns null instead of "O".
     success = (
         top_success
         and status_indicator == _STATUS_OK
@@ -142,6 +148,7 @@ def _parse_response(response: dict, crn: str, action: RegistrationAction) -> Reg
             error_flag=error_flag,
             status_indicator=status_indicator,
             errors=top_errors,
+            raw_response=response,
         )
 
     return RegistrationResult(
