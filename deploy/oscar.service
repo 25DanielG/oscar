@@ -1,0 +1,20 @@
+[Unit]
+Description=OSCAR Bot Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oscarbot
+WorkingDirectory=/home/oscarbot/oscar
+EnvironmentFile=/home/oscarbot/oscar/.env
+ExecStart=/home/oscarbot/oscar/.venv/bin/oscar monitor
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

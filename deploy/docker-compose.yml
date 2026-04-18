@@ -1,0 +1,11 @@
+services:
+  oscar:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./session.json:/app/session.json:ro
+      - ./logs:/app/logs
+      - ./oscar.db:/app/oscar.db
+    command: oscar monitor
