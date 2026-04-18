@@ -16,6 +16,9 @@ logs/
 *.db-journal
 *.db-shm
 *.db-wal
+graphify-out/
+CLAUDE.md
+.claude/
 
 # Python
 __pycache__/

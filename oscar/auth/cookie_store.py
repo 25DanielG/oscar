@@ -34,6 +34,17 @@ def as_httpx_cookies(cookies: list[dict[str, Any]]) -> httpx.Cookies:
         jar.set(c["name"], c["value"], domain=domain, path=path)
     return jar
 
+def castgc_hours_remaining(cookies: list[dict[str, Any]]) -> float | None:
+    """Return hours until CASTGC expires, or None if not found or has no expiry."""
+    now = datetime.now()
+    for c in cookies:
+        if c.get("name") == "CASTGC":
+            ts = c.get("expires", -1)
+            if not ts or float(ts) < 0:
+                return None
+            return (datetime.fromtimestamp(float(ts)) - now).total_seconds() / 3600
+    return None
+
 def cookie_expiry_summary(cookies: list[dict[str, Any]]) -> list[dict[str, Any]]:
     now = datetime.now()
     out = []

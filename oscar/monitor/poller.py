@@ -34,6 +34,7 @@ OnTrigger = Callable[[ClassAvailability, RegistrationAction], Awaitable[None]]
 
 _RECOVERY_INTERVAL = 30.0 # seconds between session-restore attempts
 _HEARTBEAT_INTERVAL = 86_400.0 # 24 hours
+_EXPIRY_WARN_HOURS = 36.0
 
 class Monitor:
     def __init__(self, config: Config, notifier: Notifier | None = None, on_trigger: OnTrigger | None = None) -> None:
@@ -74,6 +75,7 @@ class Monitor:
 
         self._session_ok.set()
         log.info("monitor_ready")
+        await self._check_cookie_expiry()
 
         tasks = [
             asyncio.create_task(self._poll_crn_loop(crn_cfg), name=f"poll-{crn_cfg.crn}")
@@ -244,8 +246,26 @@ class Monitor:
                 f"Alive. Monitoring {crn_count} CRN(s) for {self._config.term}.",
                 priority=PRIORITY_LOW,
             )
+            await self._check_cookie_expiry()
 
     # helpers
+
+    async def _check_cookie_expiry(self) -> None:
+        from oscar.auth.cookie_store import castgc_hours_remaining, load_cookies
+        try:
+            cookies = load_cookies(self._config.cookies_path)
+        except FileNotFoundError:
+            return
+        hours = castgc_hours_remaining(cookies)
+        if hours is None or hours < 0:
+            return
+        if hours < _EXPIRY_WARN_HOURS:
+            log.warning("cookie_expiry_warning", hours_remaining=round(hours, 1))
+            await self._notify(
+                "OSCAR: Session Expiring Soon",
+                f"CASTGC expires in {hours:.0f}h.\nRun on laptop: oscar auth refresh --headed\nThen: scripts/refresh_auth.sh",
+                priority=PRIORITY_HIGH,
+            )
 
     async def _open_client(self) -> BannerClient:
         client = BannerClient.from_path(self._config.cookies_path, self._config.term)

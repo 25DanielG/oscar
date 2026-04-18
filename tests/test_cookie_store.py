@@ -8,6 +8,7 @@ import pytest
 
 from oscar.auth.cookie_store import (
     as_httpx_cookies,
+    castgc_hours_remaining,
     cookie_expiry_summary,
     load_cookies,
     save_cookies,
@@ -48,6 +49,22 @@ def test_expiry_summary_sorted_by_expiry(fake_cookies: Path) -> None:
     summary = cookie_expiry_summary(cookies)
     expires = [s["expires"] for s in summary]
     assert expires == sorted(expires)
+
+def test_castgc_hours_remaining_future(future_ts: float) -> None:
+    cookies = [{"name": "CASTGC", "value": "x", "domain": "sso.gatech.edu", "expires": future_ts}]
+    hours = castgc_hours_remaining(cookies)
+    assert hours is not None and hours > 0
+
+def test_castgc_hours_remaining_expired(past_ts: float) -> None:
+    cookies = [{"name": "CASTGC", "value": "x", "domain": "sso.gatech.edu", "expires": past_ts}]
+    hours = castgc_hours_remaining(cookies)
+    assert hours is not None and hours < 0
+
+def test_castgc_hours_remaining_missing() -> None:
+    assert castgc_hours_remaining([{"name": "OTHER", "value": "x", "domain": "x.com", "expires": 9999999999.0}]) is None
+
+def test_castgc_hours_remaining_no_expiry() -> None:
+    assert castgc_hours_remaining([{"name": "CASTGC", "value": "x", "domain": "x.com", "expires": -1}]) is None
 
 def test_as_httpx_cookies(fake_cookies: Path) -> None:
     cookies = load_cookies(fake_cookies)
