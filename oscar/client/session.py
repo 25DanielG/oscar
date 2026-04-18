@@ -207,6 +207,17 @@ class BannerClient:
         details = await self.get_section_details(crn, term)
 
         assert self._http is not None
+
+        # class search needs its own term context, separate from registration session.
+        # _acquire_tokens only sets mode=registration; searchResults uses mode=search.
+        await self._http.post(
+            TERM_SEARCH,
+            params={"mode": "search"},
+            data={"term": term},
+            headers=_BASE_HEADERS,
+            follow_redirects=True,
+        )
+
         response = await self._http.get(
             CLASS_SEARCH,
             params={
@@ -214,7 +225,7 @@ class BannerClient:
                 "txt_courseNumber": details.course_number,
                 "txt_term": term,
                 "pageOffset": 0,
-                "pageMaxSize": 50,
+                "pageMaxSize": 500,
                 "sortColumn": "subjectDescription",
                 "sortDirection": "asc",
                 "uniqueSessionId": self._session_id,
@@ -226,6 +237,10 @@ class BannerClient:
         data = response.json()
         if not data.get("success"):
             raise BannerError(f"Class search failed: {data}")
+
+        total = data.get("totalCount", "?")
+        returned = len(data.get("data", []))
+        log.info("class_search_results", crn=crn, subject=details.subject, course=details.course_number, total=total, returned=returned)
 
         for section in data.get("data", []):
             if section.get("courseReferenceNumber") == crn:
