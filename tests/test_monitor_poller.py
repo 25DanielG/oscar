@@ -242,3 +242,63 @@ async def test_poll_crn_loop_schema_drift_notifies_once(tmp_path: Path) -> None:
     assert notifier.send.call_count == 1
     assert "Schema Drift" in notifier.send.call_args[0][0]
     assert "80168" in mon._drift_alerted
+
+# _registered: poll loop stops after real (non-dry-run) registration success
+
+async def test_poll_crn_loop_stops_after_registration(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    config = _make_config(tmp_path)
+    mon = Monitor(config=config)
+    mon._session_ok = asyncio.Event()
+    mon._session_ok.set()
+    mon._expiry_lock = asyncio.Lock()
+    mon._reg_lock = asyncio.Lock()
+    mon._db = init_db(config.db_path)
+
+    mock_client = AsyncMock()
+    mon._client = mock_client
+
+    # seed _registered to simulate a completed registration.
+    mon._registered.add("80168")
+
+    poll_count = 0
+
+    original_do_poll = mon._do_poll
+    async def counting_poll(crn: str, term: str) -> None:
+        nonlocal poll_count
+        poll_count += 1
+        await original_do_poll(crn, term)
+
+    mon._do_poll = counting_poll  # type: ignore[method-assign]
+
+    with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
+        await mon._poll_crn_loop(config.crns[0])  # must return, not loop forever
+
+    assert poll_count == 0  # loop exited before any poll
+
+async def test_registered_set_not_marked_on_dry_run(tmp_path: Path) -> None:
+    """dry_run=True must not add CRN to _registered."""
+    from unittest.mock import patch
+    config = _make_config(tmp_path)
+    mon = Monitor(config=config)
+    mon._session_ok = asyncio.Event()
+    mon._session_ok.set()
+    mon._expiry_lock = asyncio.Lock()
+    mon._reg_lock = asyncio.Lock()
+    mon._db = init_db(config.db_path)
+
+    mock_client = AsyncMock()
+    mon._client = mock_client
+
+    # _do_register path with a dry_run success result.
+    from oscar.registrar.register import RegistrationResult
+    from oscar.monitor.state import RegistrationAction
+
+    avail = _avail(seats=1)
+    result = RegistrationResult(success=True, crn="80168", action=RegistrationAction.REGISTER, dry_run=True)
+
+    with patch("oscar.registrar.register.attempt_registration", return_value=result):
+        await mon._do_register(avail, RegistrationAction.REGISTER)
+
+    assert "80168" not in mon._registered

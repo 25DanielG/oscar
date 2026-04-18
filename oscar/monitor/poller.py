@@ -50,6 +50,7 @@ class Monitor:
         # silent retry after a major-restriction failure
         self._restriction_pending: set[str] = set()
         self._drift_alerted: set[str] = set()
+        self._registered: set[str] = set()
         self._crn_cfg_map = {c.crn: c for c in config.crns}
 
     # entry point
@@ -112,6 +113,10 @@ class Monitor:
         while True:
             assert self._session_ok is not None
             await self._session_ok.wait()
+
+            if crn in self._registered:
+                log.info("crn_registered_poll_stopped", crn=crn)
+                return
 
             try:
                 await self._do_poll(crn, term)
@@ -310,6 +315,8 @@ class Monitor:
             self._restriction_pending.discard(avail.crn)
             verified = False
             if not result.dry_run:
+                self._registered.add(avail.crn)
+                log.info("crn_registration_succeeded_stopping_poll", crn=avail.crn)
                 verified = await verify_registered(self._client, avail.crn, avail.term)
             status_line = (
                 "DRY RUN — not submitted"
@@ -363,6 +370,8 @@ class Monitor:
             self._restriction_pending.discard(avail.crn)
             verified = False
             if not result.dry_run:
+                self._registered.add(avail.crn)
+                log.info("crn_registration_succeeded_stopping_poll", crn=avail.crn)
                 verified = await verify_registered(
                     self._client, avail.crn, avail.term
                 )
