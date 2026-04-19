@@ -215,6 +215,8 @@ class BannerClient:
 
         assert self._http is not None
 
+        await self._http.post(CLASS_SEARCH_RESET, headers=self._headers())
+
         response = await self._http.get(
             CLASS_SEARCH,
             params={
