@@ -3,7 +3,7 @@ Async monitor loop. One poll routine for each CRN running concurrently, with a s
 Session expiry flow:
     - first poller to detect expiry acquires lock, clears session_ok, sends ONE notification
     - all pollers block on session_ok.wait() — monitoring paused
-    - process must be restarted with fresh cookies to resume
+    - silent recheck every 15 min; on success sets session_ok and sends ONE "restored" notification
 
 """
 
@@ -32,6 +32,7 @@ log = structlog.get_logger()
 OnTrigger = Callable[[ClassAvailability, RegistrationAction], Awaitable[None]]
 
 _HEARTBEAT_INTERVAL = 86_400.0 # 24 hours
+_SESSION_RECHECK_INTERVAL = 900.0 # 15 minutes
 _EXPIRY_WARN_HOURS = 36.0
 
 class Monitor:
@@ -222,10 +223,34 @@ class Monitor:
         log.error("session_expired_monitoring_paused")
         await self._notify(
             "OSCAR: Session Expired — Monitoring Paused",
-            "Run on laptop: oscar auth refresh --headed\nThen restart the monitor.",
+            "Run on laptop: oscar auth refresh --headed",
             priority=PRIORITY_HIGH,
         )
-        # polling stays paused (session_ok remains cleared) until process restart
+
+        while True:
+            await asyncio.sleep(_SESSION_RECHECK_INTERVAL)
+            log.info("session_recheck_attempt")
+            try:
+                new_client = await self._open_client()
+            except (SessionExpiredError, Exception) as exc:
+                log.info("session_recheck_still_expired", error=str(exc))
+                continue
+            except asyncio.CancelledError:
+                raise
+
+            old_client = self._client
+            self._client = new_client
+            if old_client is not None:
+                try:
+                    await old_client.__aexit__(None, None, None)
+                except Exception:
+                    pass
+
+            assert self._session_ok is not None
+            self._session_ok.set()
+            log.info("session_restored")
+            await self._notify("OSCAR: Session Restored", "Monitoring resumed.")
+            return
 
     # heartbeat
     async def _heartbeat_loop(self) -> None:
