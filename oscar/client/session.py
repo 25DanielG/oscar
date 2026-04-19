@@ -239,10 +239,14 @@ class BannerClient:
             raise BannerError(f"Class search failed: {data}")
 
         total = data.get("totalCount", "?")
-        returned = len(data.get("data", []))
+        raw_sections = data.get("data")
+        if raw_sections is None:
+            log.warning("banner_data_null", crn=crn, msg="Banner returned null data — registration system may be down")
+        sections = raw_sections or []
+        returned = len(sections)
         log.info("class_search_results", crn=crn, subject=details.subject, course=details.course_number, total=total, returned=returned)
 
-        for section in data.get("data", []):
+        for section in sections:
             if section.get("courseReferenceNumber") == crn:
                 try:
                     avail = ClassAvailability(
