@@ -23,6 +23,7 @@ oscar auth refresh --headed
 ```
 oscar monitor              start the polling loop
 oscar status               session health + watched CRNs
+oscar history <CRN>        seat availability history and sparkline for a CRN
 oscar check-crn <CRN>      live seat count for a CRN
 oscar register-now <CRN>   attempt registration immediately
 oscar dry-run <CRN>        simulate registration without submitting
@@ -40,6 +41,11 @@ oscar logs                 tail the structured log
 # on repo in VPS
 docker compose -f deploy/docker-compose.yml --project-directory . up -d
 docker compose -f deploy/docker-compose.yml --project-directory . logs -f
+```
+
+```bash
+# to close docker container
+docker compose -f deploy/docker-compose.yml --project-directory . down
 ```
 
 Need a `session.json` and `.env` in the VPS repo root before starting.
