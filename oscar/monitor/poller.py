@@ -1,10 +1,9 @@
 """
 Async monitor loop. One poll routine for each CRN running concurrently, with a shared BannerClient.
-Session expiry handled with asyncio.Event and Lock to coordinate between pollers and recovery loop.
 Session expiry flow:
-    - poller detects expiry → acquires lock → clears event → notifies user
-    - recovery loop retries _open_client() every 30s
-    - success → replaces self._client → sets event → all pollers resume
+    - first poller to detect expiry acquires lock, clears session_ok, sends ONE notification
+    - all pollers block on session_ok.wait() — monitoring paused
+    - process must be restarted with fresh cookies to resume
 
 """
 
@@ -32,7 +31,6 @@ log = structlog.get_logger()
 
 OnTrigger = Callable[[ClassAvailability, RegistrationAction], Awaitable[None]]
 
-_RECOVERY_INTERVAL = 30.0 # seconds between session-restore attempts
 _HEARTBEAT_INTERVAL = 86_400.0 # 24 hours
 _EXPIRY_WARN_HOURS = 36.0
 
@@ -217,46 +215,17 @@ class Monitor:
 
         async with self._expiry_lock:
             if not self._session_ok.is_set():
-                # another poller is already handling recovery, wait for it to finish
+                # another poller already handled this, just wait
                 return
-            # first poller to detect expiry, fix
             self._session_ok.clear()
 
-        log.error("session_expired_recovery_started")
+        log.error("session_expired_monitoring_paused")
         await self._notify(
-            "OSCAR: Session Expired",
-            "Run on laptop: oscar auth refresh --headed\nThen: scripts/refresh_auth.sh",
+            "OSCAR: Session Expired — Monitoring Paused",
+            "Run on laptop: oscar auth refresh --headed\nThen restart the monitor.",
             priority=PRIORITY_HIGH,
         )
-
-        while True:
-            await asyncio.sleep(_RECOVERY_INTERVAL)
-            log.info("session_recovery_attempt")
-            try:
-                new_client = await self._open_client()
-            except SessionExpiredError:
-                log.info("session_still_expired_retrying")
-                continue
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                log.error("session_recovery_error", error=str(exc))
-                continue
-
-            old_client = self._client
-            self._client = new_client
-
-            if old_client is not None:
-                try:
-                    await old_client.__aexit__(None, None, None)
-                except Exception:
-                    pass
-
-            assert self._session_ok is not None
-            self._session_ok.set()
-            log.info("session_restored")
-            await self._notify("OSCAR: Session Restored", "Monitoring resumed.")
-            return
+        # polling stays paused (session_ok remains cleared) until process restart
 
     # heartbeat
     async def _heartbeat_loop(self) -> None:
