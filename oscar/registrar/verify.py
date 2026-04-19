@@ -3,7 +3,7 @@
 from __future__ import annotations
 import asyncio
 import structlog
-from oscar.client.session import BannerClient, BannerError
+from oscar.client.session import BannerClient, BannerError, SessionExpiredError
 
 log = structlog.get_logger()
 
@@ -19,6 +19,9 @@ async def verify_registered(client: BannerClient, crn: str, term: str, timeout: 
     while True:
         try:
             events = await client.get_registration_events(term)
+        except SessionExpiredError as exc:
+            log.warning("verify_session_expired", crn=crn, error=str(exc))
+            return False
         except BannerError as exc:
             log.warning("verify_events_error", crn=crn, error=str(exc))
             events = []

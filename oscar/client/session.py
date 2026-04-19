@@ -122,7 +122,14 @@ class BannerClient:
         if any(h in str(reg_response.url) for h in _SSO_HOSTS):
             raise SessionExpiredError(f"CAS session expired (CASTGC gone) → {reg_response.url}")
 
-        # set active term in the registration servlet session.
+        # set term in both servlet contexts (search and registration are separate server-side sessions).
+        await self._http.post(
+            TERM_SEARCH,
+            params={"mode": "search"},
+            data={"term": self._term},
+            headers=_BASE_HEADERS,
+            follow_redirects=True,
+        )
         await self._http.post(
             TERM_SEARCH,
             params={"mode": "registration"},
@@ -207,16 +214,6 @@ class BannerClient:
         details = await self.get_section_details(crn, term)
 
         assert self._http is not None
-
-        # class search needs its own term context, separate from registration session.
-        # _acquire_tokens only sets mode=registration; searchResults uses mode=search.
-        await self._http.post(
-            TERM_SEARCH,
-            params={"mode": "search"},
-            data={"term": term},
-            headers=_BASE_HEADERS,
-            follow_redirects=True,
-        )
 
         response = await self._http.get(
             CLASS_SEARCH,
