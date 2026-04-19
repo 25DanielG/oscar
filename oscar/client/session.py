@@ -270,6 +270,8 @@ class BannerClient:
                 )
                 return avail
 
+        found_crns = [s.get("courseReferenceNumber") for s in data.get("data", [])]
+        log.warning("crn_not_in_results", crn=crn, found_crns=found_crns)
         raise BannerError(
             f"CRN {crn} not found in search results "
             f"(searched {details.subject} {details.course_number}, term {term}). "
