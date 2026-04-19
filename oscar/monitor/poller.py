@@ -64,16 +64,24 @@ class Monitor:
 
         self._db = init_db(self._config.db_path)
 
-        try:
-            self._client = await self._open_client()
-        except SessionExpiredError:
-            log.error("startup_session_expired")
-            await self._notify(
-                "OSCAR: Startup Failed",
-                "Session expired at startup. Run: oscar auth refresh --headed",
-                priority=PRIORITY_HIGH,
-            )
-            raise
+        for attempt in range(1, 6):
+            try:
+                self._client = await self._open_client()
+                break
+            except SessionExpiredError:
+                log.error("startup_session_expired")
+                await self._notify(
+                    "OSCAR: Startup Failed",
+                    "Session expired at startup. Run: oscar auth refresh --headed",
+                    priority=PRIORITY_HIGH,
+                )
+                raise
+            except Exception as exc:
+                wait = 10 * attempt
+                log.warning("startup_network_error", attempt=attempt, error=str(exc), retry_in=wait)
+                if attempt == 5:
+                    raise
+                await asyncio.sleep(wait)
 
         self._session_ok.set()
         log.info("monitor_ready")
