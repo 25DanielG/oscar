@@ -171,6 +171,12 @@ class BannerClient:
         self._sync_token = token
         log.info("tokens_acquired", sync_token=token[:8] + "…", session_id=self._session_id)
 
+    async def _reinit_session(self) -> None:
+        self._session_id = _make_session_id()
+        self._section_cache.clear()
+        log.info("session_reinit", new_session_id=self._session_id)
+        await self._acquire_tokens()
+
     #  API
 
     async def get_section_details(self, crn: str, term: str) -> SectionDetails:
@@ -241,7 +247,27 @@ class BannerClient:
         total = data.get("totalCount", "?")
         raw_sections = data.get("data")
         if raw_sections is None:
-            log.warning("banner_data_null", crn=crn, msg="Banner returned null data — registration system may be down")
+            log.warning("banner_data_null_reinit", crn=crn, msg="Banner returned null data — reinitialising session")
+            await self._reinit_session()
+            response = await self._http.get(
+                CLASS_SEARCH,
+                params={
+                    "txt_subject": details.subject,
+                    "txt_courseNumber": details.course_number,
+                    "txt_term": term,
+                    "pageOffset": 0,
+                    "pageMaxSize": 500,
+                    "sortColumn": "subjectDescription",
+                    "sortDirection": "asc",
+                    "uniqueSessionId": self._session_id,
+                },
+                headers=self._headers(),
+            )
+            self._check(response)
+            data = response.json()
+            raw_sections = data.get("data")
+            if raw_sections is None:
+                log.warning("banner_data_null", crn=crn, msg="Banner still null after reinit — system may be down")
         sections = raw_sections or []
         returned = len(sections)
         log.info("class_search_results", crn=crn, subject=details.subject, course=details.course_number, total=total, returned=returned)
