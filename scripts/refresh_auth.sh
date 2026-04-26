@@ -12,18 +12,19 @@ echo ""
 
 # headless first
 echo "Checking existing session (headless)..."
-if oscar auth refresh 2>/dev/null; then
+OSCAR="python -m oscar.cli"
+if $OSCAR auth refresh 2>/dev/null; then
     echo "Session still valid."
 else
     echo "Session expired or no profile found."
     echo "Starting headed browser for manual login..."
     echo ""
-    oscar auth refresh --headed
+    $OSCAR auth refresh --headed
 fi
 
 echo ""
 echo "Cookie expiry:"
-oscar auth status
+$OSCAR auth status
 
 echo ""
 
