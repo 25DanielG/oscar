@@ -50,6 +50,7 @@ class Monitor:
         self._restriction_pending: set[str] = set()
         self._drift_alerted: set[str] = set()
         self._registered: set[str] = set()
+        self._session_expiry_notified: bool = False
         self._crn_cfg_map = {c.crn: c for c in config.crns}
 
     # entry point
@@ -221,11 +222,13 @@ class Monitor:
             self._session_ok.clear()
 
         log.error("session_expired_monitoring_paused")
-        await self._notify(
-            "OSCAR: Session Expired — Monitoring Paused",
-            "Run on laptop: oscar auth refresh --headed",
-            priority=PRIORITY_HIGH,
-        )
+        if not self._session_expiry_notified:
+            self._session_expiry_notified = True
+            await self._notify(
+                "OSCAR: Session Expired — Monitoring Paused",
+                "Run on laptop: oscar auth refresh --headed",
+                priority=PRIORITY_HIGH,
+            )
 
         while True:
             await asyncio.sleep(_SESSION_RECHECK_INTERVAL)
@@ -247,6 +250,7 @@ class Monitor:
                     pass
 
             assert self._session_ok is not None
+            self._session_expiry_notified = False
             self._session_ok.set()
             log.info("session_restored")
             await self._notify("OSCAR: Session Restored", "Monitoring resumed.")
